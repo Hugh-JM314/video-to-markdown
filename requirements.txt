@@ -1,0 +1,4 @@
+pysrt>=1.1.2
+ffmpeg-python>=0.2.0
+pydub>=0.25.1
+openai-whisper>=20250625

@@ -1,0 +1,39 @@
+{
+  "name": "video_to_markdown",
+  "title": "Convert local video to Markdown",
+  "description": "Convert local video files to structured Markdown notes with subtitle extraction, Whisper speech recognition, intelligent segmentation, and automatic screenshots",
+  "version": "1.0.1",
+  "author": "Skill Creator",
+  "triggers": [
+    {
+      "type": "file",
+      "patterns": ["*.mp4", "*.mov", "*.avi", "*.mkv", "*.webm"]
+    }
+  ],
+  "inputs": [
+    {
+      "name": "video_file",
+      "type": "file",
+      "description": "Video file path",
+      "required": true
+    },
+    {
+      "name": "output_dir",
+      "type": "string",
+      "description": "Output directory",
+      "required": false,
+      "default": "./output"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "markdown_file",
+      "type": "file",
+      "description": "Generated Markdown file path"
+    }
+  ],
+  "dependencies": {
+    "python": ["pysrt", "pydub", "ffmpeg-python", "openai-whisper"],
+    "system": ["ffmpeg"]
+  }
+}
