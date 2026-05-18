@@ -1,8 +1,8 @@
 {
   "name": "video_to_markdown",
   "title": "Convert local video to Markdown",
-  "description": "Convert local video files to structured Markdown notes with subtitle extraction, Whisper speech recognition, intelligent segmentation, and automatic screenshots",
-  "version": "1.0.1",
+  "description": "Convert local video files to structured Markdown notes with subtitle extraction, Whisper speech recognition, core point extraction, intelligent title generation, automatic screenshots, and article enhancement",
+  "version": "1.1.0",
   "author": "Skill Creator",
   "triggers": [
     {

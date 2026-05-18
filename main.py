@@ -31,6 +31,15 @@ class VideoToMarkdown:
         self.screenshot_count = 0
         self.temp_dir = tempfile.mkdtemp()
         self.ffmpeg_path = self._find_ffmpeg()
+        self.keywords = {
+            'intro': ['介绍', '简介', '开始', '今天', '主题', '内容', '目的'],
+            'concept': ['概念', '定义', '含义', '意思', '理解', '本质'],
+            'method': ['方法', '步骤', '流程', '过程', '做法', '技巧', '如何', '步骤'],
+            'example': ['例子', '示例', '案例', '演示', '实战', '练习'],
+            'code': ['代码', '编程', '实现', '开发', '编写', '函数', '类', '接口'],
+            'result': ['结果', '效果', '输出', '展示', '对比', '差异'],
+            'summary': ['总结', '回顾', '要点', '核心', '重点', '关键']
+        }
         
     def _find_ffmpeg(self) -> str:
         """查找ffmpeg可执行文件路径"""
@@ -259,15 +268,73 @@ class VideoToMarkdown:
         
         return paragraphs
     
-    def generate_paragraph_title(self, text: str, index: int) -> str:
-        """生成段落标题"""
-        titles = [
-            '简介', '核心概念', '实现步骤', '关键要点', '深入分析',
-            '示例演示', '总结归纳', '注意事项', '扩展思考', '实践建议'
+    def analyze_content_type(self, text: str) -> str:
+        """分析内容类型，用于智能标题生成"""
+        text_lower = text.lower()
+        for content_type, keywords in self.keywords.items():
+            for keyword in keywords:
+                if keyword in text_lower:
+                    return content_type
+        return 'general'
+    
+    def extract_core_points(self, subs: List[Tuple[float, float, str]]) -> List[Dict]:
+        """从字幕中提取核心观点"""
+        core_points = []
+        important_patterns = [
+            r'(重要|关键|核心|重点).*?([。！？])',
+            r'(必须|应该|建议|需要).*?([。！？])',
+            r'(首先|其次|然后|最后|第一步|第二步).*?([。！？])',
+            r'(总结|结论|要点).*?([。！？])',
+            r'(注意|警告|提示).*?([。！？])'
         ]
-        if index < len(titles):
-            return titles[index]
-        return f"要点{index + 1}"
+        
+        for start, end, text in subs:
+            for pattern in important_patterns:
+                matches = re.findall(pattern, text)
+                for match in matches:
+                    core_points.append({
+                        'text': match[0] + match[1],
+                        'start': start,
+                        'end': end,
+                        'is_important': True
+                    })
+            if len(text) > 30 and ('。' in text or '！' in text or '？' in text):
+                core_points.append({
+                    'text': text,
+                    'start': start,
+                    'end': end,
+                    'is_important': False
+                })
+        
+        return core_points
+    
+    def generate_intelligent_title(self, text: str, index: int) -> str:
+        """根据内容智能生成标题"""
+        content_type = self.analyze_content_type(text)
+        
+        title_templates = {
+            'intro': ['简介', '概述', '内容介绍', '主题引入', '开篇说明'],
+            'concept': ['核心概念', '基本定义', '概念解析', '理论基础', '关键术语'],
+            'method': ['实现步骤', '操作流程', '方法详解', '步骤指南', '实践方法'],
+            'example': ['示例演示', '实战案例', '代码示例', '应用实例', '案例分析'],
+            'code': ['代码实现', '编程讲解', '代码解析', '开发要点', '代码说明'],
+            'result': ['结果展示', '效果对比', '输出分析', '结果解读', '对比总结'],
+            'summary': ['总结归纳', '要点回顾', '核心要点', '关键总结', '内容回顾']
+        }
+        
+        if content_type in title_templates:
+            templates = title_templates[content_type]
+            return templates[min(index, len(templates) - 1)]
+        
+        default_titles = [
+            '主要内容', '核心观点', '关键要点', '深入分析',
+            '详细解读', '要点阐述', '内容讲解', '重点说明'
+        ]
+        return default_titles[min(index, len(default_titles) - 1)]
+    
+    def generate_paragraph_title(self, text: str, index: int) -> str:
+        """生成段落标题（兼容旧方法）"""
+        return self.generate_intelligent_title(text, index)
     
     def process_paragraph(self, text: str, end_time: float) -> str:
         """处理段落文本，添加必要的截图提示"""
@@ -281,20 +348,54 @@ class VideoToMarkdown:
         
         return text
     
+    def generate_article_title(self, subs: List[Tuple[float, float, str]]) -> str:
+        """从字幕中生成文章主标题"""
+        first_text = ' '.join([text for _, _, text in subs[:3]]).strip()
+        
+        patterns = [
+            r'(主题|题目|内容|介绍).*?([。！？：])',
+            r'(今天|本次|我们).*?(讲|说|分享|介绍).*?([。！？：])'
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, first_text)
+            if match:
+                title = match.group(0).replace('。', '').replace('！', '').replace('？', '').replace('：', '')
+                if len(title) > 5:
+                    return title
+        
+        if len(first_text) > 100:
+            return first_text[:100] + '...'
+        return first_text or '视频笔记'
+    
     def generate_markdown(self, video_path: str) -> str:
-        """生成Markdown笔记"""
+        """生成Markdown笔记（增强版）"""
         subs = self.extract_subtitles(video_path)
         
         if not subs:
             return "## 无法提取字幕\n\n视频中未找到字幕信息，请确保视频包含字幕轨道或提供配套的SRT字幕文件。"
         
+        article_title = self.generate_article_title(subs)
         paragraphs = self.group_subtitles_into_paragraphs(subs)
-        markdown_parts = []
+        core_points = self.extract_core_points(subs)
+        
+        markdown_parts = [f"# {article_title}"]
         
         for i, para in enumerate(paragraphs):
-            title = self.generate_paragraph_title(para['text'], i)
+            title = self.generate_intelligent_title(para['text'], i)
             content = self.process_paragraph(para['text'], para.get('end', para['start'] + 5))
+            
+            for cp in core_points:
+                if cp['start'] >= para['start'] and cp['text'] in para['text']:
+                    content = f"**{cp['text']}**\n\n" + content
+                    break
+            
             markdown_parts.append(f"## {title}\n\n{content}")
+        
+        if core_points:
+            important_points = [cp['text'] for cp in core_points if cp.get('is_important')][:5]
+            if important_points:
+                markdown_parts.append("## 核心要点\n\n" + "\n\n".join([f"- {point}" for point in important_points]))
         
         return '\n\n'.join(markdown_parts)
     
