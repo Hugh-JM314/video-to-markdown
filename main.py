@@ -350,11 +350,11 @@ class VideoToMarkdown:
     
     def generate_article_title(self, subs: List[Tuple[float, float, str]]) -> str:
         """从字幕中生成文章主标题"""
-        first_text = ' '.join([text for _, _, text in subs[:3]]).strip()
+        first_text = ' '.join([text for _, _, text in subs[:5]]).strip()
         
         patterns = [
-            r'(主题|题目|内容|介绍).*?([。！？：])',
-            r'(今天|本次|我们).*?(讲|说|分享|介绍).*?([。！？：])'
+            r'(主题|题目|内容|介绍|教程|实战|入门).*?([。！？：])',
+            r'(今天|本次|我们|大家好).*?(讲|说|分享|介绍|学习|教你).*?([。！？：])'
         ]
         
         for pattern in patterns:
@@ -364,16 +364,122 @@ class VideoToMarkdown:
                 if len(title) > 5:
                     return title
         
-        if len(first_text) > 100:
-            return first_text[:100] + '...'
+        if len(first_text) > 80:
+            return first_text[:80] + '...'
         return first_text or '视频笔记'
     
-    def generate_markdown(self, video_path: str) -> str:
+    def analyze_video_structure(self, subs: List[Tuple[float, float, str]]) -> List[Dict]:
+        """分析视频结构，识别主要章节"""
+        chapters = []
+        current_chapter = {'title': '', 'content': [], 'start': 0, 'end': 0}
+        chapter_patterns = [
+            r'(第[一二三四五六七八九十]章|第[0-9]+节|第[0-9]+部分|接下来|下面|现在)',
+            r'(开始|首先|第一步|第一部分|入门|介绍)',
+            r'(总结|回顾|结束|最后)'
+        ]
+        
+        for start, end, text in subs:
+            matched = False
+            for pattern in chapter_patterns:
+                if re.search(pattern, text):
+                    if current_chapter['content']:
+                        chapters.append(current_chapter)
+                    current_chapter = {
+                        'title': text.strip()[:50],
+                        'content': [(start, end, text)],
+                        'start': start,
+                        'end': end
+                    }
+                    matched = True
+                    break
+            
+            if not matched:
+                current_chapter['content'].append((start, end, text))
+                current_chapter['end'] = end
+        
+        if current_chapter['content']:
+            chapters.append(current_chapter)
+        
+        return chapters
+    
+    def summarize_chapter(self, chapter_content: List[Tuple[float, float, str]]) -> str:
+        """总结章节内容"""
+        texts = [text for _, _, text in chapter_content]
+        full_text = ' '.join(texts)
+        
+        if len(full_text) > 500:
+            sentences = re.split(r'[。！？]', full_text)
+            key_sentences = []
+            
+            important_patterns = [
+                r'(重要|关键|核心|重点|必须|应该|建议)',
+                r'(首先|其次|然后|最后|第一步|第二步)',
+                r'(总结|结论|要点)'
+            ]
+            
+            for sentence in sentences[:20]:
+                if any(re.search(pattern, sentence) for pattern in important_patterns):
+                    key_sentences.append(sentence.strip())
+            
+            if key_sentences:
+                return '。'.join(key_sentences[:5]) + '。'
+            
+            return full_text[:300] + '...'
+        
+        return full_text
+    
+    def generate_tutorial_structure(self, subs: List[Tuple[float, float, str]]) -> Dict:
+        """生成教程式文章结构"""
+        chapters = self.analyze_video_structure(subs)
+        
+        structure = {
+            'title': self.generate_article_title(subs),
+            'intro': '',
+            'chapters': [],
+            'summary': ''
+        }
+        
+        if chapters:
+            structure['intro'] = self.summarize_chapter(chapters[0]['content'])[:200]
+            
+            for i, chapter in enumerate(chapters[1:-1], 1):
+                chapter_text = ' '.join([text for _, _, text in chapter['content']])
+                chapter_summary = self.summarize_chapter(chapter['content'])
+                
+                chapter_info = {
+                    'number': i,
+                    'title': self.generate_intelligent_title(chapter_text, i),
+                    'original_title': chapter['title'],
+                    'content': chapter_summary,
+                    'start_time': chapter['start'],
+                    'end_time': chapter['end'],
+                    'screenshots': self.identify_screenshot_points(chapter['content'])
+                }
+                structure['chapters'].append(chapter_info)
+            
+            if len(chapters) > 1:
+                last_chapter = chapters[-1]
+                structure['summary'] = self.summarize_chapter(last_chapter['content'])
+        
+        return structure
+    
+    def identify_screenshot_points(self, content: List[Tuple[float, float, str]]) -> List[float]:
+        """识别需要截图的时间点"""
+        points = []
+        for start, end, text in content:
+            if self.should_add_screenshot(text):
+                points.append(end)
+        return points[:5]
+    
+    def generate_markdown(self, video_path: str, style: str = 'detailed') -> str:
         """生成Markdown笔记（增强版）"""
         subs = self.extract_subtitles(video_path)
         
         if not subs:
             return "## 无法提取字幕\n\n视频中未找到字幕信息，请确保视频包含字幕轨道或提供配套的SRT字幕文件。"
+        
+        if style == 'tutorial':
+            return self.generate_tutorial_markdown(subs)
         
         article_title = self.generate_article_title(subs)
         paragraphs = self.group_subtitles_into_paragraphs(subs)
@@ -398,6 +504,106 @@ class VideoToMarkdown:
                 markdown_parts.append("## 核心要点\n\n" + "\n\n".join([f"- {point}" for point in important_points]))
         
         return '\n\n'.join(markdown_parts)
+    
+    def generate_tutorial_markdown(self, subs: List[Tuple[float, float, str]]) -> str:
+        """生成教程风格的Markdown文章"""
+        structure = self.generate_tutorial_structure(subs)
+        return self._build_tutorial_markdown(structure, subs, include_images=False)
+    
+    def generate_tutorial_markdown_with_images(self, subs: List[Tuple[float, float, str]], structure: Dict, video_path: str, output_dir: str) -> str:
+        """生成带实际截图的教程风格Markdown文章"""
+        screenshots_dir = os.path.join(output_dir, "screenshots")
+        os.makedirs(screenshots_dir, exist_ok=True)
+        
+        image_counter = 1
+        for chapter in structure['chapters']:
+            for time in chapter.get('screenshots', []):
+                time_str = self.format_time(time)
+                image_name = f"screenshot_{image_counter:03d}_{time_str.replace(':', '_')}.png"
+                image_path = os.path.join(screenshots_dir, image_name)
+                
+                if self.capture_screenshot(video_path, time_str, image_path):
+                    chapter.setdefault('images', []).append(image_name)
+                
+                image_counter += 1
+        
+        return self._build_tutorial_markdown(structure, subs, include_images=True)
+    
+    def _build_tutorial_markdown(self, structure: Dict, subs: List[Tuple[float, float, str]], include_images: bool = False) -> str:
+        """构建教程风格的Markdown文章"""
+        markdown_parts = []
+        
+        markdown_parts.append(f"## 🚀 {structure['title']}")
+        markdown_parts.append("")
+        markdown_parts.append("---")
+        markdown_parts.append("")
+        
+        markdown_parts.append("### 👋 嗨，我是你的AI助手")
+        markdown_parts.append("")
+        
+        intro_text = structure['intro'] or "今天给大家分享一个超实用的教程！"
+        markdown_parts.append(intro_text)
+        markdown_parts.append("")
+        
+        if structure['chapters']:
+            markdown_parts.append("### 📋 教程目录")
+            markdown_parts.append("")
+            for i, chapter in enumerate(structure['chapters'][:6], 1):
+                markdown_parts.append(f"{i}️⃣ **{chapter['title']}**")
+            markdown_parts.append("")
+            markdown_parts.append("---")
+            markdown_parts.append("")
+        
+        step_num = 1
+        for chapter in structure['chapters']:
+            markdown_parts.append(f"## 📝 第{step_num}步：{chapter['title']}")
+            markdown_parts.append("")
+            markdown_parts.append(chapter['content'])
+            
+            if include_images and chapter.get('images'):
+                for idx, image_name in enumerate(chapter['images'], 1):
+                    markdown_parts.append("")
+                    markdown_parts.append(f"![截图{idx}](screenshots/{image_name})")
+            elif chapter['screenshots']:
+                for idx, time in enumerate(chapter['screenshots'], 1):
+                    time_str = self.format_time(time)
+                    markdown_parts.append("")
+                    markdown_parts.append(f"**【配图位置{idx}：{time_str}截图】**")
+                    markdown_parts.append(f"*(配图描述：{chapter['title']}相关界面截图)*")
+            
+            markdown_parts.append("")
+            markdown_parts.append("---")
+            markdown_parts.append("")
+            step_num += 1
+        
+        if structure['summary']:
+            markdown_parts.append("## ✨ 总结")
+            markdown_parts.append("")
+            markdown_parts.append(structure['summary'])
+            markdown_parts.append("")
+            markdown_parts.append("**重点记住：**")
+            markdown_parts.append("")
+            
+            core_points = self.extract_core_points(subs)
+            important_points = [cp['text'] for cp in core_points if cp.get('is_important')][:4]
+            for i, point in enumerate(important_points, 1):
+                markdown_parts.append(f"{i}. {point}")
+            
+            markdown_parts.append("")
+            markdown_parts.append("---")
+            markdown_parts.append("")
+        
+        markdown_parts.append("## 💬 有问题？来聊天！")
+        markdown_parts.append("")
+        markdown_parts.append("你们在学习过程中遇到什么问题了吗？欢迎在评论区留言！")
+        markdown_parts.append("")
+        markdown_parts.append("**评论区见！**")
+        markdown_parts.append("")
+        markdown_parts.append("---")
+        markdown_parts.append("")
+        markdown_parts.append("*关注我，获取更多实用教程！*")
+        
+        return '\n'.join(markdown_parts)
     
     def extract_screenshot_placeholders(self, markdown_content: str) -> List[Tuple[str, str]]:
         """提取Markdown中的截图占位符"""
@@ -435,7 +641,7 @@ class VideoToMarkdown:
         
         return markdown_content
     
-    def process_video(self, video_path: str, output_dir: str = "./output") -> str:
+    def process_video(self, video_path: str, output_dir: str = "./output", style: str = 'detailed') -> str:
         """处理视频并生成完整的Markdown笔记"""
         os.makedirs(output_dir, exist_ok=True)
         
@@ -448,8 +654,13 @@ class VideoToMarkdown:
                 raise Exception("Failed to download video")
             print(f"Video downloaded: {actual_video_path}")
         
-        markdown_content = self.generate_markdown(actual_video_path)
-        markdown_content = self.replace_placeholders_with_images(markdown_content, actual_video_path, output_dir)
+        if style == 'tutorial':
+            subs = self.extract_subtitles(actual_video_path)
+            structure = self.generate_tutorial_structure(subs)
+            markdown_content = self.generate_tutorial_markdown_with_images(subs, structure, actual_video_path, output_dir)
+        else:
+            markdown_content = self.generate_markdown(actual_video_path, style)
+            markdown_content = self.replace_placeholders_with_images(markdown_content, actual_video_path, output_dir)
         
         video_name = os.path.splitext(os.path.basename(actual_video_path))[0].replace(' ', '_')
         output_file = os.path.join(output_dir, f"{video_name}_notes.md")
@@ -463,10 +674,12 @@ def main():
     parser = argparse.ArgumentParser(description='将视频转换为Markdown笔记')
     parser.add_argument('video_file', help='视频文件路径')
     parser.add_argument('--output', '-o', default='./output', help='输出目录')
+    parser.add_argument('--style', '-s', default='detailed', choices=['detailed', 'tutorial'], 
+                        help='输出风格: detailed(详细笔记), tutorial(教程风格)')
     args = parser.parse_args()
     
     converter = VideoToMarkdown()
-    output_file = converter.process_video(args.video_file, args.output)
+    output_file = converter.process_video(args.video_file, args.output, args.style)
     print(f"Markdown notes generated: {output_file}")
 
 if __name__ == "__main__":
